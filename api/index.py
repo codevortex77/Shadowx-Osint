@@ -1,62 +1,47 @@
 from flask import Flask, request, jsonify
 import requests
 from datetime import datetime, timedelta
-import hashlib
 
 app = Flask(__name__)
 
 API_URL = "https://coreregistry.in/api/v1/vehicle"
 OWNER_MSG = "@PurelyYour | Buy Instantly at the Best Price"
 
-# Generate a key valid for 30 days
-def generate_key():
-    expiry = datetime.now() + timedelta(days=30)
-    secret = f"purelyyour{expiry.strftime('%Y%m%d')}"
-    return hashlib.sha256(secret.encode()).hexdigest(), expiry
+# KEY = "1month"
+HARDCODED_KEY = "1month"
 
-# Validate the key
-def validate_key(key):
-    valid_key, expiry = generate_key()
-    if key == valid_key and datetime.now() < expiry:
-        return True
-    return False
-
-# Initial key (will expire in 30 days from now)
-KEY, EXPIRY = generate_key()
+# Expires 30 days from deployment
+KEY_EXPIRY = datetime(2026, 6, 2)  # 👈 1 month from today (May 2)
 
 @app.route("/")
 def home():
+    remaining_days = (KEY_EXPIRY - datetime.now()).days
     return jsonify({
         "status": "online",
-        "owner": OWNER_MSG
-    })
-
-@app.route("/get-key", methods=["GET"])
-def get_key():
-    return jsonify({
-        "key": KEY,
-        "expiry": EXPIRY.strftime('%Y-%m-%d %H:%M:%S'),
-        "message": "This key is valid for 30 days"
+        "owner": OWNER_MSG,
+        "key": "1month",
+        "expires_in_days": remaining_days,
+        "expiry_date": KEY_EXPIRY.strftime('%Y-%m-%d')
     })
 
 @app.route("/vehicle", methods=["GET"])
 def vehicle_lookup():
     api_key = request.args.get("key")
     
-    # Check if key is provided
-    if not api_key:
-        return jsonify({
-            "success": False,
-            "owner": OWNER_MSG,
-            "message": "API Key Required"
-        }), 401
-    
-    # Validate the key
-    if not validate_key(api_key):
+    # Check if key expired
+    if datetime.now() > KEY_EXPIRY:
         return jsonify({
             "success": False,
             "owner": OWNER_MSG,
             "message": "Key Expired"
+        }), 401
+    
+    # Check key = "1month"
+    if api_key != HARDCODED_KEY:
+        return jsonify({
+            "success": False,
+            "owner": OWNER_MSG,
+            "message": "Invalid Key"
         }), 401
 
     reg_no = request.args.get("reg")
@@ -69,6 +54,7 @@ def vehicle_lookup():
         }), 400
 
     try:
+        # This is where vehicle data comes from
         response = requests.get(
             API_URL,
             params={"reg": reg_no},
@@ -95,16 +81,19 @@ def vehicle_lookup():
         identity = payload.get("identity_info", {})
         machine = payload.get("machine_specifications", {})
 
+        # Vehicle response - YES it shows all this data
         result = {
             "success": True,
             "owner": OWNER_MSG,
-            "registration_id": identity.get("registration_id"),
-            "owner_legal_name": identity.get("owner_legal_name"),
-            "registered_contact": identity.get("registered_contact"),
-            "rto_jurisdiction": identity.get("rto_jurisdiction"),
-            "fuel_type": machine.get("fuel_type"),
-            "engine_serial": machine.get("engine_serial"),
-            "chassis_id": machine.get("chassis_id")
+            "data": {
+                "registration_id": identity.get("registration_id"),
+                "owner_legal_name": identity.get("owner_legal_name"),
+                "registered_contact": identity.get("registered_contact"),
+                "rto_jurisdiction": identity.get("rto_jurisdiction"),
+                "fuel_type": machine.get("fuel_type"),
+                "engine_serial": machine.get("engine_serial"),
+                "chassis_id": machine.get("chassis_id")
+            }
         }
 
         return jsonify(result)
@@ -113,5 +102,5 @@ def vehicle_lookup():
         return jsonify({
             "success": False,
             "owner": OWNER_MSG,
-            "message": str(e)
+            "message": f"Error: {str(e)}"
         }), 500
